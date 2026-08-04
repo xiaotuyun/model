@@ -217,6 +217,192 @@ export default function App() {
     }
   };
 
+  const directFetchModels = async (provider: string, apiKey: string, baseUrl?: string, modelsListUrl?: string): Promise<string[]> => {
+    if (modelsListUrl) {
+      let headers: Record<string, string> = {};
+      if (provider === 'gemini' && modelsListUrl.includes('googleapis.com')) {
+        headers["x-goog-api-key"] = apiKey;
+      } else {
+        headers["Authorization"] = `Bearer ${apiKey}`;
+      }
+      let fetchUrl = modelsListUrl;
+      if (provider === 'gemini') {
+        if (!fetchUrl.includes('pageSize=')) fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + 'pageSize=1000';
+        if (!fetchUrl.includes('key=')) fetchUrl += (fetchUrl.includes('?') ? '&' : '?') + `key=${apiKey}`;
+      }
+      const resp = await fetch(fetchUrl, { headers });
+      const data = await resp.json();
+      let modelIds: string[] = [];
+      if (data.models && Array.isArray(data.models)) {
+        modelIds = data.models.map((m: any) => (m.name || m.id || '').replace('models/', ''));
+      } else if (data.data && Array.isArray(data.data)) {
+        modelIds = data.data.map((m: any) => (m.id || m.name || '').replace('models/', ''));
+      } else if (Array.isArray(data)) {
+        modelIds = data.map((m: any) => typeof m === 'string' ? m : (m.id || m.name || '')).map((s: string) => s.replace('models/', ''));
+      }
+      if (modelIds.filter(Boolean).length > 0) return modelIds.filter(Boolean);
+    }
+
+    if (provider === 'gemini') {
+      const targetBase = baseUrl || "https://generativelanguage.googleapis.com/v1beta";
+      const resp = await fetch(`${targetBase.replace(/\/$/, '')}/models?pageSize=1000&key=${apiKey}`);
+      const data = await resp.json();
+      if (data.models && Array.isArray(data.models)) {
+        return data.models.map((m: any) => m.name.replace('models/', ''));
+      }
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+    } else {
+      const targetBase = baseUrl || (
+        provider === 'gpt' ? 'https://api.openai.com/v1' :
+        provider === 'claude' ? 'https://api.anthropic.com/v1' :
+        provider === 'groq' ? 'https://api.groq.com/openai/v1' :
+        'https://api.openai.com/v1'
+      );
+      const resp = await fetch(`${targetBase.replace(/\/$/, '')}/models`, {
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          ...(provider === 'claude' ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01" } : {})
+        }
+      });
+      const data = await resp.json();
+      const list = data.data || data.models || [];
+      if (Array.isArray(list) && list.length > 0) {
+        return list.map((m: any) => (m.id || m.name || '').replace('models/', ''));
+      }
+      if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+    }
+    throw new Error("无法从浏览器直接获取模型列表");
+  };
+
+  const directTestModel = async (provider: string, apiKey: string, model: string, promptText: string, baseUrl?: string): Promise<{ response?: string; error?: string }> => {
+    if (provider === 'gemini') {
+      const targetBase = baseUrl || "https://generativelanguage.googleapis.com/v1beta";
+      const resp = await fetch(`${targetBase.replace(/\/$/, '')}/models/${model}:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: promptText }] }]
+        })
+      });
+      const data = await resp.json();
+      if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+        return { response: data.candidates[0].content.parts[0].text };
+      } else if (data.error) {
+        return { error: data.error.message || JSON.stringify(data.error) };
+      }
+      return { response: JSON.stringify(data) };
+    } else if (provider === 'claude') {
+      const targetBase = baseUrl || "https://api.anthropic.com/v1";
+      const resp = await fetch(`${targetBase.replace(/\/$/, '')}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: model,
+          max_tokens: 1024,
+          messages: [{ role: 'user', content: promptText }]
+        })
+      });
+      const data = await resp.json();
+      if (data.content && data.content[0]?.text) {
+        return { response: data.content[0].text };
+      } else if (data.error) {
+        return { error: data.error.message || JSON.stringify(data.error) };
+      }
+      return { response: JSON.stringify(data) };
+    } else {
+      const targetBase = baseUrl || (
+        provider === 'gpt' ? 'https://api.openai.com/v1' :
+        provider === 'groq' ? 'https://api.groq.com/openai/v1' :
+        'https://api.openai.com/v1'
+      );
+      const resp = await fetch(`${targetBase.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [{ role: 'user', content: promptText }]
+        })
+      });
+      const data = await resp.json();
+      if (data.choices && data.choices[0]?.message?.content) {
+        return { response: data.choices[0].message.content };
+      } else if (data.error) {
+        return { error: data.error.message || JSON.stringify(data.error) };
+      }
+      return { response: JSON.stringify(data) };
+    }
+  };
+
+  const callFetchModels = async (provider: string, apiKey: string, baseUrl?: string, modelsListUrl?: string): Promise<string[]> => {
+    try {
+      const queryParams = new URLSearchParams({
+        provider,
+        apiKey,
+        ...(baseUrl && { baseUrl }),
+        ...(modelsListUrl && { modelsListUrl })
+      });
+      const res = await fetch(`/api/models?${queryParams.toString()}`);
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch (parseErr) {
+        return await directFetchModels(provider, apiKey, baseUrl, modelsListUrl);
+      }
+      if (!res.ok) {
+        throw new Error(data.error || "获取列表接口返回错误");
+      }
+      return data.models || [];
+    } catch (apiErr: any) {
+      try {
+        return await directFetchModels(provider, apiKey, baseUrl, modelsListUrl);
+      } catch (directErr: any) {
+        throw new Error(directErr.message || apiErr.message || "获取模型列表失败");
+      }
+    }
+  };
+
+  const callTestModelApi = async (provider: string, apiKey: string, model: string, promptText: string, baseUrl?: string): Promise<{ response?: string; error?: string }> => {
+    try {
+      const res = await fetch("/api/test-model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          provider, 
+          apiKey, 
+          prompt: promptText,
+          model,
+          baseUrl
+        }),
+      });
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch (parseErr) {
+        return await directTestModel(provider, apiKey, model, promptText, baseUrl);
+      }
+      if (!res.ok) {
+        return { error: data.error || data.response || `请求失败 (HTTP ${res.status})` };
+      }
+      return { response: data.response, error: data.error };
+    } catch (apiErr: any) {
+      try {
+        return await directTestModel(provider, apiKey, model, promptText, baseUrl);
+      } catch (directErr: any) {
+        return { error: directErr.message || apiErr.message || "无法连接到 API" };
+      }
+    }
+  };
+
   const handleCfLogin = async (e?: FormEvent) => {
     if (e) e.preventDefault();
     const url = cfWorkerUrl.trim();
@@ -533,26 +719,12 @@ export default function App() {
     setSingleTestResult(selectedModel.id, '', null);
     setFetchError('');
     try {
-      const queryParams = new URLSearchParams({
-        provider: selectedModel.id,
-        apiKey: activeConfig.apiKey,
-        ...(activeConfig.baseUrl && { baseUrl: activeConfig.baseUrl }),
-        ...(activeConfig.modelsListUrl && { modelsListUrl: activeConfig.modelsListUrl })
-      });
-      
-      const res = await fetch(`/api/models?${queryParams.toString()}`);
-      const text = await res.text();
-      let data: any = {};
-      try {
-        data = JSON.parse(text);
-      } catch (err) {
-        throw new Error(res.ok ? "返回数据格式错误" : `接口请求失败 (HTTP ${res.status}): 静态托管无后端 API。`);
-      }
-
-      if (!res.ok) {
-        throw new Error(data.error || "获取列表接口返回错误");
-      }
-      const modelsList = data.models || [];
+      const modelsList = await callFetchModels(
+        selectedModel.id,
+        activeConfig.apiKey,
+        activeConfig.baseUrl,
+        activeConfig.modelsListUrl
+      );
       
       updateConfig({ 
         availableModels: modelsList,
@@ -575,25 +747,13 @@ export default function App() {
     const startTime = Date.now();
     
     try {
-      const res = await fetch("/api/test-model", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          provider: providerId, 
-          apiKey: activeConfig.apiKey, 
-          prompt,
-          model: currentSelectedModelId,
-          baseUrl: activeConfig.baseUrl,
-          autocompleteUrl: activeConfig.autocompleteUrl
-        }),
-      });
-      const text = await res.text();
-      let data: any = {};
-      try {
-        data = JSON.parse(text);
-      } catch (err) {
-        throw new Error(`服务器响应格式错误 (HTTP ${res.status})。网页版静态托管不支持后端 API。`);
-      }
+      const data = await callTestModelApi(
+        providerId,
+        activeConfig.apiKey,
+        currentSelectedModelId,
+        prompt,
+        activeConfig.baseUrl
+      );
       setSingleTestResult(providerId, data.response || data.error || "未知响应", (Date.now() - startTime) / 1000);
     } catch (e: any) {
       setSingleTestResult(providerId, `错误: ${e.message || '无法连接到服务器 API.'}`, null);
@@ -651,29 +811,16 @@ export default function App() {
 
         const startTime = Date.now();
         try {
-          const res = await fetch("/api/test-model", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ 
-              provider: providerId, 
-              apiKey: activeConfig.apiKey, 
-              prompt,
-              model: modelName,
-              baseUrl: activeConfig.baseUrl,
-              autocompleteUrl: activeConfig.autocompleteUrl
-            }),
-          });
-
+          const data = await callTestModelApi(
+            providerId,
+            activeConfig.apiKey,
+            modelName,
+            prompt,
+            activeConfig.baseUrl
+          );
           const elapsed = (Date.now() - startTime) / 1000;
-          const text = await res.text();
-          let data: any = {};
-          try {
-            data = JSON.parse(text);
-          } catch (err) {
-            throw new Error(`服务器响应格式错误 (HTTP ${res.status})。静态托管无后端 API。`);
-          }
 
-          if (res.ok && data.response && !data.error) {
+          if (data.response && !data.error) {
             updateProviderModelResult(providerId, modelName, {
               model: modelName,
               status: 'success',
@@ -728,29 +875,16 @@ export default function App() {
 
     const startTime = Date.now();
     try {
-      const res = await fetch("/api/test-model", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          provider: providerId, 
-          apiKey: activeConfig.apiKey, 
-          prompt,
-          model: modelName,
-          baseUrl: activeConfig.baseUrl,
-          autocompleteUrl: activeConfig.autocompleteUrl
-        }),
-      });
-
+      const data = await callTestModelApi(
+        providerId,
+        activeConfig.apiKey,
+        modelName,
+        prompt,
+        activeConfig.baseUrl
+      );
       const elapsed = (Date.now() - startTime) / 1000;
-      const text = await res.text();
-      let data: any = {};
-      try {
-        data = JSON.parse(text);
-      } catch (err) {
-        throw new Error(`服务器响应格式错误 (HTTP ${res.status})。静态托管无后端 API。`);
-      }
 
-      if (res.ok && data.response && !data.error) {
+      if (data.response && !data.error) {
         updateProviderModelResult(providerId, modelName, {
           model: modelName,
           status: 'success',
