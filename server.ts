@@ -597,7 +597,7 @@ async function startServer() {
   });
 
   // Chat Completions routing
-  app.post(["/v1/chat/completions", "/v1/:targetProvider/chat/completions"], async (req, res) => {
+  const handleChatCompletionsRequest = async (req: express.Request, res: express.Response) => {
     const authHeader = req.headers.authorization || "";
     let apiKey = "";
     if (authHeader.startsWith("Bearer ")) {
@@ -659,7 +659,10 @@ async function startServer() {
         }
       });
     }
-  });
+  };
+
+  app.post("/v1/chat/completions", handleChatCompletionsRequest);
+  app.post("/v1/:targetProvider/chat/completions", handleChatCompletionsRequest);
 
   async function forwardOpenAICompatible(targetBase: string, apiKey: string, body: any, res: express.Response) {
     const isStream = !!body.stream;
