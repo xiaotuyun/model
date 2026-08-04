@@ -203,40 +203,61 @@ export default function App() {
     }
 
     // 2. Fallback: Direct fetch to Cloudflare Worker URL (fully supports GitHub Pages / static hosting)
-    try {
-      const directRes = await fetch(trimmedUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      
-      const responseText = await directRes.text();
-      let directData: any = {};
-      try {
-        directData = JSON.parse(responseText);
-      } catch (parseErr) {
-        const is404 = directRes.status === 404 || responseText.includes('Not Found');
-        return {
-          ok: false,
-          data: {
-            success: false,
-            error: is404 
-              ? `Worker 返回 404 Not Found (页面不存在)。\n可能原因:\n1. 您误填了 Cloudflare 控制台网址 (dash.cloudflare.com)。\n2. 您的 Worker 尚未在 Cloudflare 中点击「保存并部署」。\n请确认输入的公共服务链接形如: https://xs-auth.your-subdomain.workers.dev`
-              : `Worker 返回的不是有效 JSON 数据 (HTTP ${directRes.status})。\n响应内容: ${responseText.slice(0, 150)}\n提示: 请确保输入的 Worker 网址正确且已成功部署。`
-          }
-        };
-      }
-
-      return { ok: directRes.ok, data: directData };
-    } catch (err: any) {
-      return { 
-        ok: false, 
-        data: { 
-          success: false, 
-          error: `连接 Worker 失败: ${err.message || '网络连接或跨域请求失败 (CORS)'}。\n提示: 请确保 Worker 已部署且允许跨域访问。` 
-        } 
-      };
+    const endpoints: string[] = [trimmedUrl];
+    const action = payload.action || 'ping';
+    if (action === "login" || action === "ping") {
+      endpoints.push(`${trimmedUrl}/api/auth/login`);
+    } else if (action === "change" || action === "update") {
+      endpoints.push(`${trimmedUrl}/api/auth/change`);
+      endpoints.push(`${trimmedUrl}/api/auth/update`);
     }
+
+    let lastError = '';
+    let lastStatus = 0;
+    let lastResponseText = '';
+
+    for (const url of endpoints) {
+      try {
+        const directRes = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        
+        const responseText = await directRes.text();
+        let directData: any = {};
+        let isJson = false;
+        try {
+          directData = JSON.parse(responseText);
+          isJson = true;
+        } catch (parseErr) {
+          // not json
+        }
+
+        if (directRes.ok) {
+          return { ok: true, data: isJson ? directData : { success: true, message: responseText } };
+        } else {
+          lastStatus = directRes.status;
+          lastResponseText = responseText;
+          lastError = (isJson && directData.error) ? directData.error : responseText;
+        }
+      } catch (err: any) {
+        if (!lastError) {
+          lastError = err.message || '网络连接或跨域请求失败 (CORS)';
+        }
+      }
+    }
+
+    const is404 = lastStatus === 404 || lastResponseText.includes('Not Found') || lastError.includes('Not Found');
+    return {
+      ok: false,
+      data: {
+        success: false,
+        error: is404 
+          ? `Worker 返回 404 Not Found (页面不存在)。\n可能原因:\n1. 您的 Worker 尚未在 Cloudflare 中点击「保存并部署」。\n2. 您的 D1 数据库尚未成功初始化。\n请确认输入的公共服务链接形如: https://xs-auth.your-subdomain.workers.dev`
+          : `连接 Worker 失败 (HTTP ${lastStatus || '无响应'}): ${lastError || '未知错误'}\n提示: 请确保 Worker 网址正确，并已添加 D1 绑定和 CORS 跨域访问。`
+      }
+    };
   };
 
   const directFetchModels = async (provider: string, apiKey: string, baseUrl?: string, modelsListUrl?: string): Promise<string[]> => {
