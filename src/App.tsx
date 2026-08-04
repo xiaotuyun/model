@@ -163,7 +163,7 @@ export default function App() {
   const [changePassSuccess, setChangePassSuccess] = useState('');
 
   const requestCloudflareWorker = async (workerUrl: string, payload: any) => {
-    // 1. Try Express backend proxy first (/api/cf-auth)
+    // 1. Try Express backend proxy first (/api/cf-auth) if available
     try {
       const res = await fetch('/api/cf-auth', {
         method: 'POST',
@@ -179,20 +179,41 @@ export default function App() {
         return { ok: true, data };
       }
     } catch (e) {
-      // Fallback to direct fetch
+      // Express backend not available (e.g. GitHub Pages static hosting), fall back to direct fetch
     }
 
-    // 2. Fallback: Direct fetch to Cloudflare Worker URL (supports static hosting / GitHub Pages)
+    // 2. Fallback: Direct fetch to Cloudflare Worker URL (fully supports GitHub Pages / static hosting)
     try {
-      const directRes = await fetch(workerUrl.trim(), {
+      const targetUrl = workerUrl.trim();
+      const directRes = await fetch(targetUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const directData = await directRes.json();
+      
+      const responseText = await directRes.text();
+      let directData: any = {};
+      try {
+        directData = JSON.parse(responseText);
+      } catch (parseErr) {
+        return {
+          ok: false,
+          data: {
+            success: false,
+            error: `Worker 返回的不是有效 JSON 数据 (HTTP ${directRes.status})。\n响应内容: ${responseText.slice(0, 150)}\n提示: 请确保输入的 Worker 网址正确且已在 Cloudflare 成功部署。`
+          }
+        };
+      }
+
       return { ok: directRes.ok, data: directData };
     } catch (err: any) {
-      return { ok: false, data: { success: false, error: err.message || '网络连接或跨域请求失败' } };
+      return { 
+        ok: false, 
+        data: { 
+          success: false, 
+          error: `连接 Worker 失败: ${err.message || '网络连接或跨域请求失败 (CORS)'}。\n提示: 请确保 Worker 已部署且允许跨域访问。` 
+        } 
+      };
     }
   };
 
@@ -520,11 +541,17 @@ export default function App() {
       });
       
       const res = await fetch(`/api/models?${queryParams.toString()}`);
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || "获取列表接口返回错误");
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch (err) {
+        throw new Error(res.ok ? "返回数据格式错误" : `接口请求失败 (HTTP ${res.status}): 静态托管无后端 API。`);
       }
-      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "获取列表接口返回错误");
+      }
       const modelsList = data.models || [];
       
       updateConfig({ 
@@ -560,10 +587,16 @@ export default function App() {
           autocompleteUrl: activeConfig.autocompleteUrl
         }),
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch (err) {
+        throw new Error(`服务器响应格式错误 (HTTP ${res.status})。网页版静态托管不支持后端 API。`);
+      }
       setSingleTestResult(providerId, data.response || data.error || "未知响应", (Date.now() - startTime) / 1000);
-    } catch (e) {
-      setSingleTestResult(providerId, "错误: 无法连接到服务器 API.", null);
+    } catch (e: any) {
+      setSingleTestResult(providerId, `错误: ${e.message || '无法连接到服务器 API.'}`, null);
     } finally {
       setTesting(false);
     }
@@ -632,7 +665,13 @@ export default function App() {
           });
 
           const elapsed = (Date.now() - startTime) / 1000;
-          const data = await res.json();
+          const text = await res.text();
+          let data: any = {};
+          try {
+            data = JSON.parse(text);
+          } catch (err) {
+            throw new Error(`服务器响应格式错误 (HTTP ${res.status})。静态托管无后端 API。`);
+          }
 
           if (res.ok && data.response && !data.error) {
             updateProviderModelResult(providerId, modelName, {
@@ -703,7 +742,13 @@ export default function App() {
       });
 
       const elapsed = (Date.now() - startTime) / 1000;
-      const data = await res.json();
+      const text = await res.text();
+      let data: any = {};
+      try {
+        data = JSON.parse(text);
+      } catch (err) {
+        throw new Error(`服务器响应格式错误 (HTTP ${res.status})。静态托管无后端 API。`);
+      }
 
       if (res.ok && data.response && !data.error) {
         updateProviderModelResult(providerId, modelName, {
