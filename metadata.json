@@ -1,0 +1,6 @@
+{
+  "name": "AI Model Platform",
+  "description": "A platform to interact with AI models.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
