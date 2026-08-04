@@ -212,6 +212,17 @@ export default function App() {
       endpoints.push(`${trimmedUrl}/api/auth/update`);
     }
 
+    const normalizedPayload = {
+      action: action,
+      username: payload.username || '',
+      password: payload.password || '',
+      account: payload.username || payload.account || payload.newAccount || '',
+      newAccount: payload.newAccount || '',
+      newPassword: payload.newPassword || '',
+      oldPassword: payload.oldPassword || '',
+      timestamp: Date.now()
+    };
+
     let lastError = '';
     let lastStatus = 0;
     let lastResponseText = '';
@@ -221,7 +232,7 @@ export default function App() {
         const directRes = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(normalizedPayload)
         });
         
         const responseText = await directRes.text();
