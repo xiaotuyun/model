@@ -163,7 +163,16 @@ export default function App() {
   const [changePassSuccess, setChangePassSuccess] = useState('');
 
   const requestCloudflareWorker = async (workerUrl: string, payload: any) => {
-    const trimmedUrl = workerUrl.trim();
+    const trimmedUrl = workerUrl.trim().replace(/\/+$/, '');
+    if (!trimmedUrl) {
+      return {
+        ok: false,
+        data: {
+          success: false,
+          error: '请输入有效的 Cloudflare Worker 网址。'
+        }
+      };
+    }
     if (trimmedUrl.includes('dash.cloudflare.com')) {
       return {
         ok: false,
