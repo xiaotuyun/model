@@ -194,9 +194,9 @@ export default function App() {
         })
       });
       const contentType = res.headers.get('content-type') || '';
-      if (res.ok && contentType.includes('application/json')) {
+      if (contentType.includes('application/json')) {
         const data = await res.json();
-        return { ok: true, data };
+        return { ok: res.ok, data };
       }
     } catch (e) {
       // Express backend not available (e.g. GitHub Pages static hosting), fall back to direct fetch
@@ -237,6 +237,18 @@ export default function App() {
         if (directRes.ok) {
           return { ok: true, data: isJson ? directData : { success: true, message: responseText } };
         } else {
+          // If the worker responded with a valid JSON error message (even with an HTTP failure status), 
+          // it means the connection to the Worker is 100% fine, but there is a business-level error 
+          // (e.g. wrong password, database table missing, etc.)
+          if (isJson && (directData.error || directData.message)) {
+            return {
+              ok: false,
+              data: {
+                success: false,
+                error: directData.error || directData.message
+              }
+            };
+          }
           lastStatus = directRes.status;
           lastResponseText = responseText;
           lastError = (isJson && directData.error) ? directData.error : responseText;
