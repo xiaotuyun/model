@@ -163,13 +163,24 @@ export default function App() {
   const [changePassSuccess, setChangePassSuccess] = useState('');
 
   const requestCloudflareWorker = async (workerUrl: string, payload: any) => {
+    const trimmedUrl = workerUrl.trim();
+    if (trimmedUrl.includes('dash.cloudflare.com')) {
+      return {
+        ok: false,
+        data: {
+          success: false,
+          error: '您填写的 URL 是 Cloudflare 控制台管理网址！\n请复制 Worker 部署后生成的公共服务链接 (通常以 .workers.dev 结尾，例如 https://xs-auth.your-subdomain.workers.dev)'
+        }
+      };
+    }
+
     // 1. Try Express backend proxy first (/api/cf-auth) if available
     try {
       const res = await fetch('/api/cf-auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          workerUrl,
+          workerUrl: trimmedUrl,
           ...payload
         })
       });
@@ -184,8 +195,7 @@ export default function App() {
 
     // 2. Fallback: Direct fetch to Cloudflare Worker URL (fully supports GitHub Pages / static hosting)
     try {
-      const targetUrl = workerUrl.trim();
-      const directRes = await fetch(targetUrl, {
+      const directRes = await fetch(trimmedUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -196,11 +206,14 @@ export default function App() {
       try {
         directData = JSON.parse(responseText);
       } catch (parseErr) {
+        const is404 = directRes.status === 404 || responseText.includes('Not Found');
         return {
           ok: false,
           data: {
             success: false,
-            error: `Worker 返回的不是有效 JSON 数据 (HTTP ${directRes.status})。\n响应内容: ${responseText.slice(0, 150)}\n提示: 请确保输入的 Worker 网址正确且已在 Cloudflare 成功部署。`
+            error: is404 
+              ? `Worker 返回 404 Not Found (页面不存在)。\n可能原因:\n1. 您误填了 Cloudflare 控制台网址 (dash.cloudflare.com)。\n2. 您的 Worker 尚未在 Cloudflare 中点击「保存并部署」。\n请确认输入的公共服务链接形如: https://xs-auth.your-subdomain.workers.dev`
+              : `Worker 返回的不是有效 JSON 数据 (HTTP ${directRes.status})。\n响应内容: ${responseText.slice(0, 150)}\n提示: 请确保输入的 Worker 网址正确且已成功部署。`
           }
         };
       }
