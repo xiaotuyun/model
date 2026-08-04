@@ -162,6 +162,40 @@ export default function App() {
   const [changePassError, setChangePassError] = useState('');
   const [changePassSuccess, setChangePassSuccess] = useState('');
 
+  const requestCloudflareWorker = async (workerUrl: string, payload: any) => {
+    // 1. Try Express backend proxy first (/api/cf-auth)
+    try {
+      const res = await fetch('/api/cf-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workerUrl,
+          ...payload
+        })
+      });
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        return { ok: true, data };
+      }
+    } catch (e) {
+      // Fallback to direct fetch
+    }
+
+    // 2. Fallback: Direct fetch to Cloudflare Worker URL (supports static hosting / GitHub Pages)
+    try {
+      const directRes = await fetch(workerUrl.trim(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const directData = await directRes.json();
+      return { ok: directRes.ok, data: directData };
+    } catch (err: any) {
+      return { ok: false, data: { success: false, error: err.message || '网络连接或跨域请求失败' } };
+    }
+  };
+
   const handleCfLogin = async (e?: FormEvent) => {
     if (e) e.preventDefault();
     const url = cfWorkerUrl.trim();
@@ -170,7 +204,7 @@ export default function App() {
       return;
     }
     if (url.includes('dash.cloudflare.com')) {
-      setCfNotice({ type: 'error', text: '您填写的 URL 是 Cloudflare 控制台管理网址！\n请复制 Worker 部署后生成的公共服务链接 (通常以 .workers.dev 结尾，例如 https://xs-auth.your-subdomain.workers.dev)' });
+      setCfNotice({ type: 'error', text: '您填写的 URL 是 Cloudflare 控制台管理网址！\n请复制 Worker 部署后生成的公共服务链接 (通常以 .workers.dev 结尾)' });
       return;
     }
     if (url.includes('you.workers.dev') || url.includes('example.com')) {
@@ -186,20 +220,13 @@ export default function App() {
     setCfNotice({ type: 'info', text: '正在验证 Cloudflare Worker 数据库响应...' });
 
     try {
-      const response = await fetch('/api/cf-auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          workerUrl: url,
-          username: cfUsername.trim(),
-          password: cfPassword.trim(),
-          action: 'login'
-        })
+      const { ok, data } = await requestCloudflareWorker(url, {
+        username: cfUsername.trim(),
+        password: cfPassword.trim(),
+        action: 'login'
       });
 
-      const data = await response.json();
-
-      if (response.ok && data.success) {
+      if (ok && data.success) {
         localStorage.setItem('cf_worker_url', url);
         localStorage.setItem('cf_authenticated_user', cfUsername.trim());
         localStorage.setItem('app_logged_in', 'true');
@@ -228,7 +255,7 @@ export default function App() {
       return;
     }
     if (url.includes('dash.cloudflare.com')) {
-      setCfNotice({ type: 'error', text: '您填写的 URL 是 Cloudflare 控制台管理网址！\n请复制 Worker 部署后生成的公共服务链接 (通常以 .workers.dev 结尾，例如 https://xs-auth.your-subdomain.workers.dev)' });
+      setCfNotice({ type: 'error', text: '您填写的 URL 是 Cloudflare 控制台管理网址！\n请复制 Worker 部署后生成的公共服务链接' });
       return;
     }
     if (url.includes('you.workers.dev') || url.includes('example.com')) {
@@ -239,19 +266,13 @@ export default function App() {
     setCfNotice({ type: 'info', text: '正在测试与 Cloudflare Worker 数据库 API 的连接...' });
 
     try {
-      const response = await fetch('/api/cf-auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          workerUrl: url,
-          username: cfUsername.trim() || 'test',
-          password: cfPassword.trim() || 'test',
-          action: 'ping'
-        })
+      const { ok, data } = await requestCloudflareWorker(url, {
+        username: cfUsername.trim() || 'test',
+        password: cfPassword.trim() || 'test',
+        action: 'ping'
       });
 
-      const data = await response.json();
-      if (response.ok && data.success) {
+      if (ok && data.success) {
         localStorage.setItem('cf_worker_url', url);
         setCfNotice({ 
           type: 'success', 
@@ -314,23 +335,16 @@ export default function App() {
     setChangePassSuccess('');
 
     try {
-      const response = await fetch('/api/cf-auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          workerUrl: url,
-          username: cfUsername.trim() || nextUser,
-          password: oldPass,
-          oldPassword: oldPass,
-          newAccount: nextUser,
-          newPassword: nextPass,
-          action: 'change'
-        })
+      const { ok, data } = await requestCloudflareWorker(url, {
+        username: cfUsername.trim() || nextUser,
+        password: oldPass,
+        oldPassword: oldPass,
+        newAccount: nextUser,
+        newPassword: nextPass,
+        action: 'change'
       });
 
-      const data = await response.json();
-
-      if (response.ok && data.success) {
+      if (ok && data.success) {
         setChangePassSuccess('Cloudflare D1 数据库账号与密码更新成功！');
         setCfUsername(nextUser);
         setCfPassword(nextPass);
